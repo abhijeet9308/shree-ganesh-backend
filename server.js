@@ -1,4 +1,5 @@
-﻿const express = require("express");
+$serverCode = @'
+const express = require("express");
 const mysql = require("mysql2");
 const cors = require("cors");
 const path = require("path");
@@ -20,7 +21,6 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 // --- MYSQL DATABASE CONNECTION ---
-// Yahan apne Hosting.com wale details daalna
 const db = mysql.createPool({
   host: process.env.DB_HOST || "localhost",
   user: process.env.DB_USER || "root", 
@@ -31,7 +31,6 @@ const db = mysql.createPool({
   queueLimit: 0
 });
 
-// Check Connection
 db.getConnection((err, connection) => {
   if (err) console.log("MySQL Connection Error:", err);
   else { console.log("MySQL Connected Successfully!"); connection.release(); }
@@ -100,7 +99,6 @@ createTables();
 app.get("/api/products", (req, res) => {
   db.query("SELECT * FROM products ORDER BY id DESC", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
-    // Parse JSON variants
     const products = results.map(p => ({ ...p, variants: p.variants ? JSON.parse(p.variants) : null }));
     res.json(products);
   });
@@ -110,7 +108,6 @@ app.post("/api/products", upload.single("imageFile"), (req, res) => {
   const data = req.body;
   const image = req.file ? `http://localhost:5000/uploads/${req.file.filename}` : "";
   
-  // Variants handle karna
   let variants = null;
   if (data.hasVariants === 'true') {
     variants = JSON.stringify({ half: Number(data.halfPrice), full: Number(data.fullPrice) });
@@ -133,11 +130,10 @@ app.delete("/api/products/:id", (req, res) => {
   });
 });
 
-// 2. ORDERS (Online & POS)
+// 2. ORDERS
 app.post("/api/orders", (req, res) => {
   const data = req.body;
   
-  // Bill Number Generate karna (POS ke liye)
   if(data.orderType === 'pos') {
     db.query("SELECT orderId FROM orders WHERE orderType = 'pos' ORDER BY id DESC LIMIT 1", (err, results) => {
       let nextBill = 1;
@@ -182,7 +178,7 @@ app.put("/api/orders/:id/status", (req, res) => {
   });
 });
 
-// 3. EXPENSES (Khrcha)
+// 3. EXPENSES
 app.get("/api/expenses", (req, res) => {
   db.query("SELECT * FROM expenses ORDER BY date DESC", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -212,12 +208,10 @@ app.post("/api/outlets", (req, res) => {
   });
 });
 
-// --- SERVE FRONTEND ---
 app.use("/uploads", express.static(uploadDir));
-const frontendPath = path.join(__dirname, "..", "frontend");
-app.use(express.static(frontendPath));
-app.get('/admin.html', (req, res) => { res.sendFile(path.join(frontendPath, 'admin.html')); });
-app.use((req, res) => { res.sendFile(path.join(frontendPath, "index.html")); });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+'@
+Set-Content -Path "C:\Users\user\OneDrive\Desktop\one\backend\server.js" -Value $serverCode -Encoding utf8
+Write-Host "Server.js update ho gaya, ab ye sirf Backend ka kaam karega!" -ForegroundColor Green
