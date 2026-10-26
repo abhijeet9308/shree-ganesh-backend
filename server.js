@@ -10,61 +10,56 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// File Upload Setup
+// --- FILE UPLOAD SETUP ---
 const uploadDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
 });
 const upload = multer({ storage });
 
-// Database Connection
+// --- DATABASE CONNECTION ---
 const db = mysql.createPool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   waitForConnections: true,
-  connectionLimit: 10
+  connectionLimit: 10,
+  queueLimit: 0
 });
 
 db.getConnection((err) => {
-  if (err) console.log("DB Error:", err);
+  if (err) console.log("Database Connection Error:", err);
   else console.log("Database Connected Successfully!");
 });
 
-// Create Tables (Agar pehle se nahi hain toh)
-db.query(`CREATE TABLE IF NOT EXISTS products (
-  id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255), category VARCHAR(100), 
-  price DECIMAL(10,2), unit VARCHAR(50), image TEXT, hasVariants BOOLEAN, 
-  variants JSON, isOutOfStock BOOLEAN, createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)`);
-db.query(`CREATE TABLE IF NOT EXISTS orders (
-  id INT AUTO_INCREMENT PRIMARY KEY, orderId VARCHAR(50), orderType VARCHAR(20), 
-  customerName VARCHAR(255), customerPhone VARCHAR(20), items JSON, subtotal DECIMAL(10,2), 
-  tax DECIMAL(10,2), totalAmount DECIMAL(10,2), status VARCHAR(50), createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)`);
-db.query(`CREATE TABLE IF NOT EXISTS outlets (
-  id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255), address TEXT, phone VARCHAR(20)
-)`);
+// --- API ROUTES ---
 
-// --- ROUTES ---
-
-// 1. PRODUCTS (Dishes)
 app.get("/api/products", (req, res) => {
   db.query("SELECT * FROM products ORDER BY id DESC", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json(results);
+    const products = results.map(p => ({ ...p, variants: p.variants ? JSON.parse(p.variants) : null }));
+    res.json(products);
   });
 });
 
 app.post("/api/products", upload.single("imageFile"), (req, res) => {
-  const { name, category, price, unit } = req.body;
+  const data = req.body;
   const image = req.file ? `/uploads/${req.file.filename}` : "";
   
-  db.query("INSERT INTO products (name, category, price, unit, image) VALUES (?, ?, ?, ?, ?)", 
-  [name, category, price, unit, image], (err) => {
+  let variants = null;
+  if (data.hasVariants === 'true') {
+    variants = JSON.stringify({ half: Number(data.halfPrice), full: Number(data.fullPrice) });
+    data.price = Number(data.fullPrice);
+  }
+
+  const query = "INSERT INTO products (name, category, price, unit, image, hasVariants, variants, isOutOfStock) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+  const values = [data.name, data.category, data.price, data.unit, image, data.hasVariants === 'true', variants, data.isOutOfStock === 'true'];
+
+  db.query(query, values, (err) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ success: true, message: "Dish Added!" });
   });
@@ -77,26 +72,69 @@ app.delete("/api/products/:id", (req, res) => {
   });
 });
 
-// 2. ORDERS
 app.get("/api/orders", (req, res) => {
   db.query("SELECT * FROM orders ORDER BY id DESC", (err, results) => {
+    if (err) return res.status(500).json({ error: err.message });
+    const orders = results.map(o => ({ ...o, items: JSON.parse(o.items) }));
+    res.json(orders);
+  });
+});
+
+app.post("/api/orders", (req, res) => {
+  const data = req.body;
+  
+  if(data.orderType === 'pos') {
+    db.query("SELECT orderId FROM orders WHERE orderType = 'pos' ORDER BY id DESC LIMIT 1", (err, results) => {
+      let nextBill = 1;
+      if(results.length > 0 && results[0].orderId) {
+        const parts = results[0].orderId.split('-');
+        if(parts.length > 1) nextBill = parseInt(parts[1]) + 1;
+      }
+      const orderId = `BILL-${String(nextBill).padStart(3, '0')}`;
+      insertOrder(orderId, 'Completed', data, res);
+    });
+  } else {
+    const orderId = "ORD-" + Math.floor(1000 + Math.random() * 9000);
+    insertOrder(orderId, 'Pending', data, res);
+  }
+});
+
+function insertOrder(orderId, status, data, res) {
+  const query = "INSERT INTO orders (orderId, orderType, customerName, customerPhone, items, subtotal, tax, totalAmount, packingCharge, deliveryCharge, serviceCharge, discountAmount, isGstApplied, paymentMode, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+  const values = [
+    orderId, data.orderType, data.customerName, data.customerPhone, JSON.stringify(data.items), 
+    data.subtotal, data.tax || 0, data.totalAmount, 
+    data.packingCharge || 0, data.deliveryCharge || 0, data.serviceCharge || 0, data.discountAmount || 0,
+    data.isGstApplied || false, data.paymentMode || 'COD', status
+  ];
+  db.query(query, values, (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ success: true, order: { ...data, orderId, status } });
+  });
+}
+
+app.put("/api/orders/:id/status", (req, res) => {
+  db.query("UPDATE orders SET status = ? WHERE id = ?", [req.body.status, req.params.id], (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ success: true });
+  });
+});
+
+app.get("/api/expenses", (req, res) => {
+  db.query("SELECT * FROM expenses ORDER BY date DESC", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(results);
   });
 });
 
-app.post("/api/orders", (req, res) => {
-  const { orderType, customerName, customerPhone, items, subtotal, tax, totalAmount, status } = req.body;
-  const orderId = (orderType === 'pos' ? "BILL-" : "ORD-") + Date.now().toString().slice(-4);
-  
-  db.query("INSERT INTO orders (orderId, orderType, customerName, customerPhone, items, subtotal, tax, totalAmount, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", 
-  [orderId, orderType, customerName, customerPhone, JSON.stringify(items), subtotal, tax, totalAmount, status], (err) => {
+app.post("/api/expenses", (req, res) => {
+  const { title, amount, category, date } = req.body;
+  db.query("INSERT INTO expenses (title, amount, category, date) VALUES (?,?,?,?)", [title, amount, category, date], (err) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ success: true, orderId });
+    res.json({ success: true });
   });
 });
 
-// 3. OUTLETS
 app.get("/api/outlets", (req, res) => {
   db.query("SELECT * FROM outlets", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -104,8 +142,15 @@ app.get("/api/outlets", (req, res) => {
   });
 });
 
-// Images Serve karna
+app.post("/api/outlets", (req, res) => {
+  const { name, address, phone, timing, mapLink } = req.body;
+  db.query("INSERT INTO outlets (name, address, phone, timing, mapLink) VALUES (?,?,?,?,?)", [name, address, phone, timing, mapLink], (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ success: true });
+  });
+});
+
 app.use("/uploads", express.static(uploadDir));
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Backend Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
