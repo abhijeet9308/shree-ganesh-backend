@@ -63,6 +63,9 @@ const createTables = async () => {
     )`,
     `CREATE TABLE IF NOT EXISTS attendance (
       id INT AUTO_INCREMENT PRIMARY KEY, staffId INT, staffName VARCHAR(255), date DATE, status VARCHAR(20)
+    )`,
+    `CREATE TABLE IF NOT EXISTS settings (
+      id INT AUTO_INCREMENT PRIMARY KEY, settingKey VARCHAR(100) UNIQUE, settingValue TEXT
     )`
   ];
   queries.forEach(q => db.query(q, (err) => { if (err) console.log("Table Error:", err.message); }));
@@ -72,58 +75,48 @@ createTables();
 
 // --- API ROUTES ---
 
-// 1. PRODUCTS - GET ALL (SAFE)
+// 1. PRODUCTS
 app.get("/api/products", (req, res) => {
   db.query("SELECT * FROM products ORDER BY id DESC", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
     const products = results.map(p => {
       let parsedVariants = null;
-      try {
-        if (p.variants && typeof p.variants === 'string') parsedVariants = JSON.parse(p.variants);
-      } catch (e) { console.log("Skipping variants for:", p.name); }
+      try { if (p.variants && typeof p.variants === 'string') parsedVariants = JSON.parse(p.variants); } catch (e) {}
       return { ...p, variants: parsedVariants };
     });
     res.json(products);
   });
 });
 
-// 2. PRODUCTS - ADD NEW
 app.post("/api/products", upload.single("imageFile"), (req, res) => {
   const data = req.body;
   const image = req.file ? `https://shree-ganesh-backend-9ic0.onrender.com/uploads/${req.file.filename}` : "";
-  
   let variants = null;
   if (data.hasVariants === 'true') {
     variants = JSON.stringify({ half: Number(data.halfPrice), full: Number(data.fullPrice) });
     data.price = Number(data.fullPrice);
   }
-
   const query = "INSERT INTO products (name, category, price, unit, image, hasVariants, variants, isOutOfStock) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
   const values = [data.name, data.category, Number(data.price), data.unit, image, data.hasVariants === 'true', variants, data.isOutOfStock === 'true'];
-
   db.query(query, values, (err) => {
     if (err) { console.log("Error adding product:", err); return res.status(500).json({ error: err.message }); }
     res.json({ success: true, message: "Dish Added!" });
   });
 });
 
-// 3. PRODUCTS - EDIT/UPDATE
 app.put("/api/products/:id", upload.single("imageFile"), (req, res) => {
   const data = req.body;
   db.query("SELECT image FROM products WHERE id = ?", [req.params.id], (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
     let image = results[0]?.image || "";
     if (req.file) image = `https://shree-ganesh-backend-9ic0.onrender.com/uploads/${req.file.filename}`;
-
     let variants = null;
     if (data.hasVariants === 'true') {
       variants = JSON.stringify({ half: Number(data.halfPrice), full: Number(data.fullPrice) });
       data.price = Number(data.fullPrice);
     }
-
     const query = "UPDATE products SET name=?, category=?, price=?, unit=?, image=?, hasVariants=?, variants=?, isOutOfStock=? WHERE id=?";
     const values = [data.name, data.category, Number(data.price), data.unit, image, data.hasVariants === 'true', variants, data.isOutOfStock === 'true', req.params.id];
-
     db.query(query, values, (err) => {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ success: true, message: "Dish Updated!" });
@@ -131,7 +124,6 @@ app.put("/api/products/:id", upload.single("imageFile"), (req, res) => {
   });
 });
 
-// 4. PRODUCTS - DELETE
 app.delete("/api/products/:id", (req, res) => {
   db.query("DELETE FROM products WHERE id = ?", [req.params.id], (err) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -139,7 +131,7 @@ app.delete("/api/products/:id", (req, res) => {
   });
 });
 
-// 5. ORDERS - GET ALL
+// 2. ORDERS
 app.get("/api/orders", (req, res) => {
   db.query("SELECT * FROM orders ORDER BY id DESC", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -152,7 +144,6 @@ app.get("/api/orders", (req, res) => {
   });
 });
 
-// 6. ORDERS - ADD NEW
 app.post("/api/orders", (req, res) => {
   const data = req.body;
   if(data.orderType === 'pos') {
@@ -178,7 +169,6 @@ function insertOrder(orderId, status, data, res) {
   });
 }
 
-// 7. ORDERS - UPDATE STATUS
 app.put("/api/orders/:id/status", (req, res) => {
   db.query("UPDATE orders SET status = ? WHERE id = ?", [req.body.status, req.params.id], (err) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -186,7 +176,7 @@ app.put("/api/orders/:id/status", (req, res) => {
   });
 });
 
-// 8. EXPENSES
+// 3. EXPENSES
 app.get("/api/expenses", (req, res) => {
   db.query("SELECT * FROM expenses ORDER BY date DESC", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -202,7 +192,14 @@ app.post("/api/expenses", (req, res) => {
   });
 });
 
-// 9. OUTLETS
+app.delete("/api/expenses/:id", (req, res) => {
+  db.query("DELETE FROM expenses WHERE id = ?", [req.params.id], (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ success: true });
+  });
+});
+
+// 4. OUTLETS
 app.get("/api/outlets", (req, res) => {
   db.query("SELECT * FROM outlets", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -218,7 +215,7 @@ app.post("/api/outlets", (req, res) => {
   });
 });
 
-// 10. STAFF MANAGEMENT
+// 5. STAFF
 app.get("/api/staff", (req, res) => {
   db.query("SELECT * FROM staff ORDER BY id DESC", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -234,7 +231,7 @@ app.post("/api/staff", (req, res) => {
   });
 });
 
-// 11. ATTENDANCE
+// 6. ATTENDANCE
 app.get("/api/attendance", (req, res) => {
   const { date } = req.query;
   db.query("SELECT * FROM attendance WHERE date = ?", [date], (err, results) => {
@@ -250,17 +247,40 @@ app.post("/api/attendance", (req, res) => {
     if(results.length > 0) {
       db.query("UPDATE attendance SET status = ? WHERE id = ?", [status, results[0].id], (err) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true, message: "Updated" });
+        res.json({ success: true });
       });
     } else {
       db.query("INSERT INTO attendance (staffId, staffName, date, status) VALUES (?,?,?,?)", [staffId, staffName, date, status], (err) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true, message: "Marked" });
+        res.json({ success: true });
       });
     }
   });
 });
 
+// 7. SETTINGS
+app.get("/api/settings", (req, res) => {
+  db.query("SELECT * FROM settings", (err, results) => {
+    if (err) return res.status(500).json({ error: err.message });
+    const settings = {};
+    results.forEach(r => settings[r.settingKey] = r.settingValue);
+    res.json(settings);
+  });
+});
+
+app.post("/api/settings", async (req, res) => {
+  const settings = req.body;
+  for (const [key, value] of Object.entries(settings)) {
+    await db.promise().query(
+      "INSERT INTO settings (settingKey, settingValue) VALUES (?, ?) ON DUPLICATE KEY UPDATE settingValue = ?",
+      [key, value, value]
+    );
+  }
+  res.json({ success: true });
+});
+
+// Serve Uploads
 app.use("/uploads", express.static(uploadDir));
+
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
