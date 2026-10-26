@@ -38,44 +38,66 @@ db.getConnection((err) => {
 
 // --- API ROUTES ---
 
-// 1. PRODUCTS - GET ALL
+// 1. PRODUCTS - GET ALL (SAFE)
 app.get("/api/products", (req, res) => {
   db.query("SELECT * FROM products ORDER BY id DESC", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
-    const products = results.map(p => ({ ...p, variants: p.variants ? JSON.parse(p.variants) : null }));
+    
+    // Safe mapping - database me kharab data hone par bhi crash nahi hoga
+    const products = results.map(p => {
+      let parsedVariants = null;
+      try {
+        if (p.variants && typeof p.variants === 'string') {
+          parsedVariants = JSON.parse(p.variants);
+        }
+      } catch (e) {
+        console.log("Skipping variants for:", p.name);
+      }
+      return { ...p, variants: parsedVariants };
+    });
     res.json(products);
   });
 });
 
-// 2. PRODUCTS - ADD NEW (Photo upload ke saath)
+// 2. PRODUCTS - ADD NEW
 app.post("/api/products", upload.single("imageFile"), (req, res) => {
-  const { name, category, price, unit } = req.body;
+  const data = req.body;
   const image = req.file ? `https://shree-ganesh-backend-9ic0.onrender.com/uploads/${req.file.filename}` : "";
   
-  const query = "INSERT INTO products (name, category, price, unit, image) VALUES (?, ?, ?, ?, ?)";
-  const values = [name, category, Number(price), unit, image];
+  let variants = null;
+  if (data.hasVariants === 'true') {
+    variants = JSON.stringify({ half: Number(data.halfPrice), full: Number(data.fullPrice) });
+    data.price = Number(data.fullPrice);
+  }
+
+  const query = "INSERT INTO products (name, category, price, unit, image, hasVariants, variants, isOutOfStock) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+  const values = [data.name, data.category, Number(data.price), data.unit, image, data.hasVariants === 'true', variants, data.isOutOfStock === 'true'];
 
   db.query(query, values, (err) => {
     if (err) {
       console.log("Error adding product:", err);
       return res.status(500).json({ error: err.message });
     }
-    res.status(201).json({ success: true, message: "Dish Added!" });
+    res.json({ success: true, message: "Dish Added!" });
   });
 });
 
-// 3. PRODUCTS - EDIT/UPDATE (Photo change ke saath)
+// 3. PRODUCTS - EDIT/UPDATE
 app.put("/api/products/:id", upload.single("imageFile"), (req, res) => {
-  const { name, category, price, unit } = req.body;
-  
+  const data = req.body;
   db.query("SELECT image FROM products WHERE id = ?", [req.params.id], (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
-    
     let image = results[0]?.image || "";
     if (req.file) image = `https://shree-ganesh-backend-9ic0.onrender.com/uploads/${req.file.filename}`;
 
-    const query = "UPDATE products SET name=?, category=?, price=?, unit=?, image=? WHERE id=?";
-    const values = [name, category, Number(price), unit, image, req.params.id];
+    let variants = null;
+    if (data.hasVariants === 'true') {
+      variants = JSON.stringify({ half: Number(data.halfPrice), full: Number(data.fullPrice) });
+      data.price = Number(data.fullPrice);
+    }
+
+    const query = "UPDATE products SET name=?, category=?, price=?, unit=?, image=?, hasVariants=?, variants=?, isOutOfStock=? WHERE id=?";
+    const values = [data.name, data.category, Number(data.price), data.unit, image, data.hasVariants === 'true', variants, data.isOutOfStock === 'true', req.params.id];
 
     db.query(query, values, (err) => {
       if (err) return res.status(500).json({ error: err.message });
@@ -96,7 +118,14 @@ app.delete("/api/products/:id", (req, res) => {
 app.get("/api/orders", (req, res) => {
   db.query("SELECT * FROM orders ORDER BY id DESC", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
-    const orders = results.map(o => ({ ...o, items: JSON.parse(o.items) }));
+    const orders = results.map(o => {
+      let parsedItems = [];
+      try {
+        if (o.items && typeof o.items === 'string') parsedItems = JSON.parse(o.items);
+        else if (o.items) parsedItems = o.items;
+      } catch(e) { console.log("Order parse error:", o.orderId); }
+      return { ...o, items: parsedItems };
+    });
     res.json(orders);
   });
 });
@@ -104,7 +133,6 @@ app.get("/api/orders", (req, res) => {
 // 6. ORDERS - ADD NEW
 app.post("/api/orders", (req, res) => {
   const data = req.body;
-  
   if(data.orderType === 'pos') {
     db.query("SELECT orderId FROM orders WHERE orderType = 'pos' ORDER BY id DESC LIMIT 1", (err, results) => {
       let nextBill = 1;
@@ -123,10 +151,7 @@ app.post("/api/orders", (req, res) => {
 
 function insertOrder(orderId, status, data, res) {
   const query = "INSERT INTO orders (orderId, orderType, customerName, customerPhone, items, subtotal, tax, totalAmount, status) VALUES (?,?,?,?,?,?,?,?,?)";
-  const values = [
-    orderId, data.orderType, data.customerName, data.customerPhone, JSON.stringify(data.items), 
-    data.subtotal, data.tax || 0, data.totalAmount, status
-  ];
+  const values = [orderId, data.orderType, data.customerName, data.customerPhone, JSON.stringify(data.items), data.subtotal, data.tax || 0, data.totalAmount, status];
   db.query(query, values, (err) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ success: true, order: { ...data, orderId, status } });
