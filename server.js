@@ -36,23 +36,51 @@ db.getConnection((err) => {
   else console.log("Database Connected Successfully!");
 });
 
+// --- CREATE TABLES AUTOMATICALLY ---
+const createTables = async () => {
+  const queries = [
+    `CREATE TABLE IF NOT EXISTS products (
+      id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255) NOT NULL, category VARCHAR(100) DEFAULT 'General',
+      price DECIMAL(10,2) DEFAULT 0, unit VARCHAR(50) DEFAULT 'KG', image TEXT,
+      hasVariants BOOLEAN DEFAULT FALSE, variants JSON, isOutOfStock BOOLEAN DEFAULT FALSE,
+      createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS orders (
+      id INT AUTO_INCREMENT PRIMARY KEY, orderId VARCHAR(50), orderType VARCHAR(20),
+      customerName VARCHAR(255), customerPhone VARCHAR(20), items JSON, subtotal DECIMAL(10,2),
+      tax DECIMAL(10,2), totalAmount DECIMAL(10,2), status VARCHAR(50) DEFAULT 'Pending',
+      createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS expenses (
+      id INT AUTO_INCREMENT PRIMARY KEY, title VARCHAR(255), amount DECIMAL(10,2),
+      category VARCHAR(100), date DATE, notes TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS outlets (
+      id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255), address TEXT, phone VARCHAR(20)
+    )`,
+    `CREATE TABLE IF NOT EXISTS staff (
+      id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255), phone VARCHAR(20), role VARCHAR(100), salary DECIMAL(10,2)
+    )`,
+    `CREATE TABLE IF NOT EXISTS attendance (
+      id INT AUTO_INCREMENT PRIMARY KEY, staffId INT, staffName VARCHAR(255), date DATE, status VARCHAR(20)
+    )`
+  ];
+  queries.forEach(q => db.query(q, (err) => { if (err) console.log("Table Error:", err.message); }));
+  console.log("Database Tables Checked/Created.");
+};
+createTables();
+
 // --- API ROUTES ---
 
 // 1. PRODUCTS - GET ALL (SAFE)
 app.get("/api/products", (req, res) => {
   db.query("SELECT * FROM products ORDER BY id DESC", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
-    
-    // Safe mapping - database me kharab data hone par bhi crash nahi hoga
     const products = results.map(p => {
       let parsedVariants = null;
       try {
-        if (p.variants && typeof p.variants === 'string') {
-          parsedVariants = JSON.parse(p.variants);
-        }
-      } catch (e) {
-        console.log("Skipping variants for:", p.name);
-      }
+        if (p.variants && typeof p.variants === 'string') parsedVariants = JSON.parse(p.variants);
+      } catch (e) { console.log("Skipping variants for:", p.name); }
       return { ...p, variants: parsedVariants };
     });
     res.json(products);
@@ -74,10 +102,7 @@ app.post("/api/products", upload.single("imageFile"), (req, res) => {
   const values = [data.name, data.category, Number(data.price), data.unit, image, data.hasVariants === 'true', variants, data.isOutOfStock === 'true'];
 
   db.query(query, values, (err) => {
-    if (err) {
-      console.log("Error adding product:", err);
-      return res.status(500).json({ error: err.message });
-    }
+    if (err) { console.log("Error adding product:", err); return res.status(500).json({ error: err.message }); }
     res.json({ success: true, message: "Dish Added!" });
   });
 });
@@ -120,10 +145,7 @@ app.get("/api/orders", (req, res) => {
     if (err) return res.status(500).json({ error: err.message });
     const orders = results.map(o => {
       let parsedItems = [];
-      try {
-        if (o.items && typeof o.items === 'string') parsedItems = JSON.parse(o.items);
-        else if (o.items) parsedItems = o.items;
-      } catch(e) { console.log("Order parse error:", o.orderId); }
+      try { if (o.items && typeof o.items === 'string') parsedItems = JSON.parse(o.items); else if (o.items) parsedItems = o.items; } catch(e) {}
       return { ...o, items: parsedItems };
     });
     res.json(orders);
@@ -140,12 +162,10 @@ app.post("/api/orders", (req, res) => {
         const parts = results[0].orderId.split('-');
         if(parts.length > 1) nextBill = parseInt(parts[1]) + 1;
       }
-      const orderId = `BILL-${String(nextBill).padStart(3, '0')}`;
-      insertOrder(orderId, 'Completed', data, res);
+      insertOrder(`BILL-${String(nextBill).padStart(3, '0')}`, 'Completed', data, res);
     });
   } else {
-    const orderId = "ORD-" + Math.floor(1000 + Math.random() * 9000);
-    insertOrder(orderId, 'Pending', data, res);
+    insertOrder("ORD-" + Math.floor(1000 + Math.random() * 9000), 'Pending', data, res);
   }
 });
 
@@ -191,14 +211,56 @@ app.get("/api/outlets", (req, res) => {
 });
 
 app.post("/api/outlets", (req, res) => {
-  const { name, address, phone, timing, mapLink } = req.body;
-  db.query("INSERT INTO outlets (name, address, phone, timing, mapLink) VALUES (?,?,?,?,?)", [name, address, phone, timing, mapLink], (err) => {
+  const { name, address, phone } = req.body;
+  db.query("INSERT INTO outlets (name, address, phone) VALUES (?,?,?)", [name, address, phone], (err) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ success: true });
   });
 });
 
-app.use("/uploads", express.static(uploadDir));
+// 10. STAFF MANAGEMENT
+app.get("/api/staff", (req, res) => {
+  db.query("SELECT * FROM staff ORDER BY id DESC", (err, results) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(results);
+  });
+});
 
+app.post("/api/staff", (req, res) => {
+  const { name, phone, role, salary } = req.body;
+  db.query("INSERT INTO staff (name, phone, role, salary) VALUES (?,?,?,?)", [name, phone, role, salary], (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ success: true });
+  });
+});
+
+// 11. ATTENDANCE
+app.get("/api/attendance", (req, res) => {
+  const { date } = req.query;
+  db.query("SELECT * FROM attendance WHERE date = ?", [date], (err, results) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(results);
+  });
+});
+
+app.post("/api/attendance", (req, res) => {
+  const { staffId, staffName, date, status } = req.body;
+  db.query("SELECT * FROM attendance WHERE staffId = ? AND date = ?", [staffId, date], (err, results) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if(results.length > 0) {
+      db.query("UPDATE attendance SET status = ? WHERE id = ?", [status, results[0].id], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true, message: "Updated" });
+      });
+    } else {
+      db.query("INSERT INTO attendance (staffId, staffName, date, status) VALUES (?,?,?,?)", [staffId, staffName, date, status], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true, message: "Marked" });
+      });
+    }
+  });
+});
+
+app.use("/uploads", express.static(uploadDir));
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
