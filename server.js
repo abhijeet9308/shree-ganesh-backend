@@ -38,7 +38,7 @@ db.getConnection((err) => {
   else console.log("Database Connected Successfully!");
 });
 
-// --- CREATE TABLES AUTOMATICALLY ---
+// --- CREATE TABLES & UPDATE COLUMNS AUTOMATICALLY ---
 const createTables = async () => {
   const queries = [
     `CREATE TABLE IF NOT EXISTS products (
@@ -49,9 +49,9 @@ const createTables = async () => {
     )`,
     `CREATE TABLE IF NOT EXISTS orders (
       id INT AUTO_INCREMENT PRIMARY KEY, orderId VARCHAR(50), orderType VARCHAR(20),
-      customerName VARCHAR(255), customerPhone VARCHAR(20), items JSON, subtotal DECIMAL(10,2),
-      tax DECIMAL(10,2), totalAmount DECIMAL(10,2), status VARCHAR(50) DEFAULT 'Pending',
-      createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      customerName VARCHAR(255), customerPhone VARCHAR(20), address TEXT, paymentMode VARCHAR(50),
+      items JSON, subtotal DECIMAL(10,2), tax DECIMAL(10,2), totalAmount DECIMAL(10,2), 
+      status VARCHAR(50) DEFAULT 'Pending', createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`,
     `CREATE TABLE IF NOT EXISTS expenses (
       id INT AUTO_INCREMENT PRIMARY KEY, title VARCHAR(255), amount DECIMAL(10,2),
@@ -76,15 +76,19 @@ const createTables = async () => {
     try { await db.promise().query(q); } catch(e) { console.log("Table Error:", e.message); }
   }
   
+  // Purane tables me naye columns add karo (agar nahi hain toh)
   const alterQueries = [
+    "ALTER TABLE orders ADD COLUMN address TEXT",
+    "ALTER TABLE orders ADD COLUMN paymentMode VARCHAR(50)",
     "ALTER TABLE outlets ADD COLUMN timing VARCHAR(100) DEFAULT '10 AM - 10 PM'",
     "ALTER TABLE outlets ADD COLUMN mapLink TEXT",
     "ALTER TABLE outlets ADD COLUMN image TEXT",
     "ALTER TABLE outlets ADD COLUMN isPrimary BOOLEAN DEFAULT FALSE"
   ];
   for (const q of alterQueries) {
-    try { await db.promise().query(q); } catch(e) { }
+    try { await db.promise().query(q); } catch(e) { /* Ignore if column exists */ }
   }
+  
   console.log("✅ Database Tables Checked/Created.");
 };
 createTables();
@@ -175,13 +179,27 @@ app.post("/api/orders", (req, res) => {
       insertOrder(`BILL-${String(nextBill).padStart(3, '0')}`, 'Completed', data, res);
     });
   } else {
-    insertOrder("ORD-" + Math.floor(1000 + Math.random() * 9000), 'Pending', data, res);
+    // Agar offline order sync ho raha hai toh purana ID use karo
+    const orderId = data.orderId || "ORD-" + Math.floor(1000 + Math.random() * 9000);
+    insertOrder(orderId, 'Pending', data, res);
   }
 });
 
 function insertOrder(orderId, status, data, res) {
-  const query = "INSERT INTO orders (orderId, orderType, customerName, customerPhone, items, subtotal, tax, totalAmount, status) VALUES (?,?,?,?,?,?,?,?,?)";
-  const values = [orderId, data.orderType, data.customerName || '', data.customerPhone || '', JSON.stringify(data.items || []), data.subtotal || 0, data.tax || 0, data.totalAmount || 0, status];
+  const query = "INSERT INTO orders (orderId, orderType, customerName, customerPhone, address, paymentMode, items, subtotal, tax, totalAmount, status) VALUES (?,?,?,?,?,?,?,?,?,?,?)";
+  const values = [
+    orderId, 
+    data.orderType, 
+    data.customerName || 'Walk-in', 
+    data.customerPhone || '', 
+    data.address || '', 
+    data.paymentMode || 'Cash',
+    JSON.stringify(data.items || []), 
+    data.subtotal || 0, 
+    data.tax || 0, 
+    data.totalAmount || 0, 
+    status
+  ];
   db.query(query, values, (err) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ success: true, order: { ...data, orderId, status } });
@@ -190,6 +208,14 @@ function insertOrder(orderId, status, data, res) {
 
 app.put("/api/orders/:id/status", (req, res) => {
   db.query("UPDATE orders SET status = ? WHERE id = ?", [req.body.status, req.params.id], (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ success: true });
+  });
+});
+
+// NAYA: ORDER DELETE (Password frontend me verify hoga)
+app.delete("/api/orders/:id", (req, res) => {
+  db.query("DELETE FROM orders WHERE id = ?", [req.params.id], (err) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ success: true });
   });
@@ -342,9 +368,10 @@ app.post("/api/settings", async (req, res) => {
     'logoUrl','instagram','facebook','whatsapp','mapLink',
     'upiId','upiPayee','codEnabled','gstEnabled','cgstPercent','sgstPercent',
     'packingCharge','deliveryCharge','serviceCharge','minOrder','freeDeliveryAbove',
-    'deliveryRadius','deliveryPincodes','orderSound','orderPopup','whatsappAlert',
+    'deliveryRadius','deliveryPincodes',
+    'orderSound','orderPopup','whatsappAlert',
     'billHeader','billFooter','billPrefix','billStartNo','showFssaiOnBill','showQrOnBill','showGstOnBill',
-    'qrImage', 'imgHero', 'imgSlider1', 'imgSlider2', 'imgSlider3', 'imgFestival', // 👈 Naye Image Fields
+    'qrImage', 'imgHero', 'imgSlider1', 'imgSlider2', 'imgSlider3', 'imgFestival',
     'adminPassword','shopClosed'
   ];
   try {
@@ -361,12 +388,12 @@ app.post("/api/settings", async (req, res) => {
   }
 });
 
-// --- NAYA ROUTE: QR & WEBSITE IMAGES UPLOAD ---
+// QR & Website Images Upload Route
 app.post("/api/upload-image", upload.single("imageFile"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
     const url = `${BASE_URL}/uploads/${req.file.filename}`;
-    const key = req.body.key; // e.g., 'qrImage', 'imgHero', etc.
+    const key = req.body.key;
     
     await db.promise().query(
       "INSERT INTO settings (settingKey, settingValue) VALUES (?, ?) ON DUPLICATE KEY UPDATE settingValue = ?",
