@@ -20,7 +20,6 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB max
 
-// --- BASE URL (domain change hone pe adjust karo) ---
 const BASE_URL = process.env.BASE_URL || "https://shree-ganesh-backend-9ic0.onrender.com";
 
 // --- DATABASE CONNECTION ---
@@ -84,9 +83,8 @@ const createTables = async () => {
     "ALTER TABLE outlets ADD COLUMN isPrimary BOOLEAN DEFAULT FALSE"
   ];
   for (const q of alterQueries) {
-    try { await db.promise().query(q); } catch(e) { /* ignore if exists */ }
+    try { await db.promise().query(q); } catch(e) { }
   }
-  
   console.log("✅ Database Tables Checked/Created.");
 };
 createTables();
@@ -327,7 +325,7 @@ app.post("/api/attendance", (req, res) => {
   });
 });
 
-// 7. SETTINGS & QR UPLOAD
+// 7. SETTINGS
 app.get("/api/settings", (req, res) => {
   db.query("SELECT * FROM settings", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -344,10 +342,9 @@ app.post("/api/settings", async (req, res) => {
     'logoUrl','instagram','facebook','whatsapp','mapLink',
     'upiId','upiPayee','codEnabled','gstEnabled','cgstPercent','sgstPercent',
     'packingCharge','deliveryCharge','serviceCharge','minOrder','freeDeliveryAbove',
-    'deliveryRadius','deliveryPincodes',
-    'orderSound','orderPopup','whatsappAlert',
+    'deliveryRadius','deliveryPincodes','orderSound','orderPopup','whatsappAlert',
     'billHeader','billFooter','billPrefix','billStartNo','showFssaiOnBill','showQrOnBill','showGstOnBill',
-    'qrImage', // Naya field
+    'qrImage', 'imgHero', 'imgSlider1', 'imgSlider2', 'imgSlider3', 'imgFestival', // 👈 Naye Image Fields
     'adminPassword','shopClosed'
   ];
   try {
@@ -364,14 +361,16 @@ app.post("/api/settings", async (req, res) => {
   }
 });
 
-// --- NAYA ROUTE: QR IMAGE UPLOAD ---
-app.post("/api/upload-qr", upload.single("qrImage"), async (req, res) => {
+// --- NAYA ROUTE: QR & WEBSITE IMAGES UPLOAD ---
+app.post("/api/upload-image", upload.single("imageFile"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
     const url = `${BASE_URL}/uploads/${req.file.filename}`;
+    const key = req.body.key; // e.g., 'qrImage', 'imgHero', etc.
+    
     await db.promise().query(
-      "INSERT INTO settings (settingKey, settingValue) VALUES ('qrImage', ?) ON DUPLICATE KEY UPDATE settingValue = ?",
-      [url, url]
+      "INSERT INTO settings (settingKey, settingValue) VALUES (?, ?) ON DUPLICATE KEY UPDATE settingValue = ?",
+      [key, url, url]
     );
     res.json({ success: true, url });
   } catch (err) {
