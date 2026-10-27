@@ -38,7 +38,7 @@ db.getConnection((err) => {
   else console.log("Database Connected Successfully!");
 });
 
-// --- CREATE TABLES & UPDATE COLUMNS AUTOMATICALLY ---
+// --- CREATE TABLES ---
 const createTables = async () => {
   const queries = [
     `CREATE TABLE IF NOT EXISTS products (
@@ -76,7 +76,6 @@ const createTables = async () => {
     try { await db.promise().query(q); } catch(e) { console.log("Table Error:", e.message); }
   }
   
-  // Purane tables me naye columns add karo (agar nahi hain toh)
   const alterQueries = [
     "ALTER TABLE orders ADD COLUMN address TEXT",
     "ALTER TABLE orders ADD COLUMN paymentMode VARCHAR(50)",
@@ -86,7 +85,7 @@ const createTables = async () => {
     "ALTER TABLE outlets ADD COLUMN isPrimary BOOLEAN DEFAULT FALSE"
   ];
   for (const q of alterQueries) {
-    try { await db.promise().query(q); } catch(e) { /* Ignore if column exists */ }
+    try { await db.promise().query(q); } catch(e) { }
   }
   
   console.log("✅ Database Tables Checked/Created.");
@@ -179,7 +178,6 @@ app.post("/api/orders", (req, res) => {
       insertOrder(`BILL-${String(nextBill).padStart(3, '0')}`, 'Completed', data, res);
     });
   } else {
-    // Agar offline order sync ho raha hai toh purana ID use karo
     const orderId = data.orderId || "ORD-" + Math.floor(1000 + Math.random() * 9000);
     insertOrder(orderId, 'Pending', data, res);
   }
@@ -213,7 +211,6 @@ app.put("/api/orders/:id/status", (req, res) => {
   });
 });
 
-// NAYA: ORDER DELETE (Password frontend me verify hoga)
 app.delete("/api/orders/:id", (req, res) => {
   db.query("DELETE FROM orders WHERE id = ?", [req.params.id], (err) => {
     if (err) return res.status(500).json({ error: err.message });
