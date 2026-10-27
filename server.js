@@ -39,7 +39,7 @@ db.getConnection((err) => {
   else console.log("Database Connected Successfully!");
 });
 
-// --- CREATE TABLES AUTOMATICALLY (WITH NEW COLUMNS) ---
+// --- CREATE TABLES AUTOMATICALLY ---
 const createTables = async () => {
   const queries = [
     `CREATE TABLE IF NOT EXISTS products (
@@ -77,7 +77,6 @@ const createTables = async () => {
     try { await db.promise().query(q); } catch(e) { console.log("Table Error:", e.message); }
   }
   
-  // Purane outlets table me naye columns add karo (safe)
   const alterQueries = [
     "ALTER TABLE outlets ADD COLUMN timing VARCHAR(100) DEFAULT '10 AM - 10 PM'",
     "ALTER TABLE outlets ADD COLUMN mapLink TEXT",
@@ -85,7 +84,7 @@ const createTables = async () => {
     "ALTER TABLE outlets ADD COLUMN isPrimary BOOLEAN DEFAULT FALSE"
   ];
   for (const q of alterQueries) {
-    try { await db.promise().query(q); } catch(e) { /* column already exists — ignore */ }
+    try { await db.promise().query(q); } catch(e) { /* ignore if exists */ }
   }
   
   console.log("✅ Database Tables Checked/Created.");
@@ -96,9 +95,7 @@ createTables();
 // API ROUTES
 // ============================================================
 
-// ============================================================
 // 1. PRODUCTS
-// ============================================================
 app.get("/api/products", (req, res) => {
   db.query("SELECT * FROM products ORDER BY id DESC", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -154,9 +151,7 @@ app.delete("/api/products/:id", (req, res) => {
   });
 });
 
-// ============================================================
 // 2. ORDERS
-// ============================================================
 app.get("/api/orders", (req, res) => {
   db.query("SELECT * FROM orders ORDER BY id DESC", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -202,9 +197,7 @@ app.put("/api/orders/:id/status", (req, res) => {
   });
 });
 
-// ============================================================
-// 3. EXPENSES (with EDIT + DELETE)
-// ============================================================
+// 3. EXPENSES
 app.get("/api/expenses", (req, res) => {
   db.query("SELECT * FROM expenses ORDER BY date DESC", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -236,9 +229,7 @@ app.delete("/api/expenses/:id", (req, res) => {
   });
 });
 
-// ============================================================
-// 4. OUTLETS (with EDIT + DELETE + image + timing + mapLink)
-// ============================================================
+// 4. OUTLETS
 app.get("/api/outlets", (req, res) => {
   db.query("SELECT * FROM outlets", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -277,9 +268,7 @@ app.delete("/api/outlets/:id", (req, res) => {
   });
 });
 
-// ============================================================
 // 5. STAFF
-// ============================================================
 app.get("/api/staff", (req, res) => {
   db.query("SELECT * FROM staff ORDER BY id DESC", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -311,9 +300,7 @@ app.delete("/api/staff/:id", (req, res) => {
   });
 });
 
-// ============================================================
 // 6. ATTENDANCE
-// ============================================================
 app.get("/api/attendance", (req, res) => {
   const { date } = req.query;
   db.query("SELECT * FROM attendance WHERE date = ?", [date], (err, results) => {
@@ -340,9 +327,7 @@ app.post("/api/attendance", (req, res) => {
   });
 });
 
-// ============================================================
-// 7. SETTINGS (with WHITELIST for security)
-// ============================================================
+// 7. SETTINGS & QR UPLOAD
 app.get("/api/settings", (req, res) => {
   db.query("SELECT * FROM settings", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -354,7 +339,6 @@ app.get("/api/settings", (req, res) => {
 
 app.post("/api/settings", async (req, res) => {
   const settings = req.body;
-  // Whitelist — sirf ye keys allowed hain (security)
   const allowed = [
     'storeName','storePhone','storeEmail','storeAddress','fssai','gstin','storeTimings',
     'logoUrl','instagram','facebook','whatsapp','mapLink',
@@ -363,11 +347,12 @@ app.post("/api/settings", async (req, res) => {
     'deliveryRadius','deliveryPincodes',
     'orderSound','orderPopup','whatsappAlert',
     'billHeader','billFooter','billPrefix','billStartNo','showFssaiOnBill','showQrOnBill','showGstOnBill',
+    'qrImage', // Naya field
     'adminPassword','shopClosed'
   ];
   try {
     for (const [key, value] of Object.entries(settings)) {
-      if (!allowed.includes(key)) continue; // skip unknown keys
+      if (!allowed.includes(key)) continue;
       await db.promise().query(
         "INSERT INTO settings (settingKey, settingValue) VALUES (?, ?) ON DUPLICATE KEY UPDATE settingValue = ?",
         [key, String(value), String(value)]
@@ -379,19 +364,25 @@ app.post("/api/settings", async (req, res) => {
   }
 });
 
-// ============================================================
-// 8. HEALTH CHECK
-// ============================================================
-app.get("/", (req, res) => {
-  res.json({ status: "OK", message: "Shree Ganesh Sweets API is running", time: new Date() });
+// --- NAYA ROUTE: QR IMAGE UPLOAD ---
+app.post("/api/upload-qr", upload.single("qrImage"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+    const url = `${BASE_URL}/uploads/${req.file.filename}`;
+    await db.promise().query(
+      "INSERT INTO settings (settingKey, settingValue) VALUES ('qrImage', ?) ON DUPLICATE KEY UPDATE settingValue = ?",
+      [url, url]
+    );
+    res.json({ success: true, url });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Serve Uploads
 app.use("/uploads", express.static(uploadDir));
 
-// ============================================================
 // ERROR HANDLER
-// ============================================================
 app.use((err, req, res, next) => {
   console.error("Server Error:", err.message);
   if (err.code === 'LIMIT_FILE_SIZE') {
