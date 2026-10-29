@@ -3,7 +3,6 @@ const mysql = require("mysql2");
 const cors = require("cors");
 const multer = require("multer");
 const cloudinary = require("cloudinary").v2;
-const streamifier = require("streamifier");
 require("dotenv").config();
 
 const app = express();
@@ -11,7 +10,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(cors());
 
 // ============================================================
-// --- CLOUDINARY & MULTER SETUP (RENDER DISK BYPASS) ---
+// --- CLOUDINARY SETUP ---
 // ============================================================
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -19,23 +18,29 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Memory storage use kar rahe hain taaki Render disk pe kuch save na ho
+// Memory storage
 const upload = multer({ 
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 } // 5MB max
 });
 
-// Helper function: Buffer ko Cloudinary pe upload karne ke liye
+// Helper function: Base64 method (Sabse reliable)
 const uploadToCloudinary = (buffer) => {
   return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      { folder: "shree_ganesh_sweets" },
+    // Buffer ko base64 string me convert karo
+    const b64 = Buffer.from(buffer).toString('base64');
+    // Data URI banao
+    const dataURI = `data:image/jpeg;base64,${b64}`;
+    
+    // Cloudinary par upload karo
+    cloudinary.uploader.upload(
+      dataURI, 
+      { folder: "shree_ganesh_sweets" }, 
       (error, result) => {
         if (error) reject(error);
         else resolve(result);
       }
     );
-    streamifier.createReadStream(buffer).pipe(stream);
   });
 };
 // ============================================================
@@ -132,7 +137,6 @@ app.post("/api/products", upload.single("imageFile"), async (req, res) => {
     const data = req.body;
     let image = "";
     
-    // Image ko Cloudinary pe bhejo
     if (req.file) {
       const result = await uploadToCloudinary(req.file.buffer);
       image = result.secure_url; 
@@ -151,6 +155,7 @@ app.post("/api/products", upload.single("imageFile"), async (req, res) => {
       res.json({ success: true, message: "Dish Added!" });
     });
   } catch (error) {
+    console.error("Cloudinary Error:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -159,11 +164,9 @@ app.put("/api/products/:id", upload.single("imageFile"), async (req, res) => {
   try {
     const data = req.body;
     
-    // Pehle purani image fetch karo
     const [results] = await db.promise().query("SELECT image FROM products WHERE id = ?", [req.params.id]);
     let image = results[0]?.image || "";
     
-    // Agar nayi image aayi hai toh Cloudinary pe upload karo
     if (req.file) {
       const result = await uploadToCloudinary(req.file.buffer);
       image = result.secure_url;
@@ -181,6 +184,7 @@ app.put("/api/products/:id", upload.single("imageFile"), async (req, res) => {
     await db.promise().query(query, values);
     res.json({ success: true, message: "Dish Updated!" });
   } catch (error) {
+    console.error("Cloudinary Error:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -226,17 +230,9 @@ app.post("/api/orders", (req, res) => {
 function insertOrder(orderId, status, data, res) {
   const query = "INSERT INTO orders (orderId, orderType, customerName, customerPhone, address, paymentMode, items, subtotal, tax, totalAmount, status) VALUES (?,?,?,?,?,?,?,?,?,?,?)";
   const values = [
-    orderId, 
-    data.orderType, 
-    data.customerName || 'Walk-in', 
-    data.customerPhone || '', 
-    data.address || '', 
-    data.paymentMode || 'Cash',
-    JSON.stringify(data.items || []), 
-    data.subtotal || 0, 
-    data.tax || 0, 
-    data.totalAmount || 0, 
-    status
+    orderId, data.orderType, data.customerName || 'Walk-in', data.customerPhone || '', 
+    data.address || '', data.paymentMode || 'Cash', JSON.stringify(data.items || []), 
+    data.subtotal || 0, data.tax || 0, data.totalAmount || 0, status
   ];
   db.query(query, values, (err) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -302,12 +298,10 @@ app.post("/api/outlets", upload.single("imageFile"), async (req, res) => {
   try {
     const { name, address, phone, timing, mapLink, isPrimary } = req.body;
     let image = "";
-    
     if (req.file) {
       const result = await uploadToCloudinary(req.file.buffer);
       image = result.secure_url;
     }
-
     const query = "INSERT INTO outlets (name, address, phone, timing, mapLink, image, isPrimary) VALUES (?,?,?,?,?,?,?)";
     await db.promise().query(query, [name, address, phone, timing || '10 AM - 10 PM', mapLink || '', image, isPrimary === 'true' ? 1 : 0]);
     res.json({ success: true });
@@ -319,15 +313,12 @@ app.post("/api/outlets", upload.single("imageFile"), async (req, res) => {
 app.put("/api/outlets/:id", upload.single("imageFile"), async (req, res) => {
   try {
     const { name, address, phone, timing, mapLink, isPrimary } = req.body;
-    
     const [results] = await db.promise().query("SELECT image FROM outlets WHERE id = ?", [req.params.id]);
     let image = results[0]?.image || "";
-    
     if (req.file) {
       const result = await uploadToCloudinary(req.file.buffer);
       image = result.secure_url;
     }
-    
     const query = "UPDATE outlets SET name=?, address=?, phone=?, timing=?, mapLink=?, image=?, isPrimary=? WHERE id=?";
     await db.promise().query(query, [name, address, phone, timing || '', mapLink || '', image, isPrimary === 'true' ? 1 : 0, req.params.id]);
     res.json({ success: true });
@@ -443,13 +434,9 @@ app.post("/api/settings", async (req, res) => {
 app.post("/api/upload-image", upload.single("imageFile"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-    
-    // Cloudinary pe upload
     const result = await uploadToCloudinary(req.file.buffer);
     const url = result.secure_url;
     const key = req.body.key;
-    
-    // Database me update
     await db.promise().query(
       "INSERT INTO settings (settingKey, settingValue) VALUES (?, ?) ON DUPLICATE KEY UPDATE settingValue = ?",
       [key, url, url]
