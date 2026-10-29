@@ -2,25 +2,43 @@ const express = require("express");
 const mysql = require("mysql2");
 const cors = require("cors");
 const multer = require("multer");
-const fs = require("fs");
-const path = require("path");
+const cloudinary = require("cloudinary").v2;
+const streamifier = require("streamifier");
 require("dotenv").config();
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 app.use(cors());
 
-// --- FILE UPLOAD SETUP ---
-const uploadDir = path.join(__dirname, "uploads");
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
+// ============================================================
+// --- CLOUDINARY & MULTER SETUP (RENDER DISK BYPASS) ---
+// ============================================================
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
 });
-const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB max
 
-const BASE_URL = process.env.BASE_URL || "https://shree-ganesh-backend-9ic0.onrender.com";
+// Memory storage use kar rahe hain taaki Render disk pe kuch save na ho
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB max
+});
+
+// Helper function: Buffer ko Cloudinary pe upload karne ke liye
+const uploadToCloudinary = (buffer) => {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: "shree_ganesh_sweets" },
+      (error, result) => {
+        if (error) reject(error);
+        else resolve(result);
+      }
+    );
+    streamifier.createReadStream(buffer).pipe(stream);
+  });
+};
+// ============================================================
 
 // --- DATABASE CONNECTION ---
 const db = mysql.createPool({
@@ -109,40 +127,62 @@ app.get("/api/products", (req, res) => {
   });
 });
 
-app.post("/api/products", upload.single("imageFile"), (req, res) => {
-  const data = req.body;
-  const image = req.file ? `${BASE_URL}/uploads/${req.file.filename}` : "";
-  let variants = null;
-  if (data.hasVariants === 'true') {
-    variants = JSON.stringify({ half: Number(data.halfPrice), full: Number(data.fullPrice) });
-    data.price = Number(data.fullPrice);
-  }
-  const query = "INSERT INTO products (name, category, price, unit, image, hasVariants, variants, isOutOfStock) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-  const values = [data.name, data.category, Number(data.price) || 0, data.unit || 'KG', image, data.hasVariants === 'true', variants, data.isOutOfStock === 'true'];
-  db.query(query, values, (err) => {
-    if (err) { console.log("Error adding product:", err); return res.status(500).json({ error: err.message }); }
-    res.json({ success: true, message: "Dish Added!" });
-  });
-});
+app.post("/api/products", upload.single("imageFile"), async (req, res) => {
+  try {
+    const data = req.body;
+    let image = "";
+    
+    // Image ko Cloudinary pe bhejo
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer);
+      image = result.secure_url; 
+    }
 
-app.put("/api/products/:id", upload.single("imageFile"), (req, res) => {
-  const data = req.body;
-  db.query("SELECT image FROM products WHERE id = ?", [req.params.id], (err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
-    let image = results[0]?.image || "";
-    if (req.file) image = `${BASE_URL}/uploads/${req.file.filename}`;
     let variants = null;
     if (data.hasVariants === 'true') {
       variants = JSON.stringify({ half: Number(data.halfPrice), full: Number(data.fullPrice) });
       data.price = Number(data.fullPrice);
     }
+    const query = "INSERT INTO products (name, category, price, unit, image, hasVariants, variants, isOutOfStock) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+    const values = [data.name, data.category, Number(data.price) || 0, data.unit || 'KG', image, data.hasVariants === 'true', variants, data.isOutOfStock === 'true'];
+    
+    db.query(query, values, (err) => {
+      if (err) { console.log("Error adding product:", err); return res.status(500).json({ error: err.message }); }
+      res.json({ success: true, message: "Dish Added!" });
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put("/api/products/:id", upload.single("imageFile"), async (req, res) => {
+  try {
+    const data = req.body;
+    
+    // Pehle purani image fetch karo
+    const [results] = await db.promise().query("SELECT image FROM products WHERE id = ?", [req.params.id]);
+    let image = results[0]?.image || "";
+    
+    // Agar nayi image aayi hai toh Cloudinary pe upload karo
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer);
+      image = result.secure_url;
+    }
+
+    let variants = null;
+    if (data.hasVariants === 'true') {
+      variants = JSON.stringify({ half: Number(data.halfPrice), full: Number(data.fullPrice) });
+      data.price = Number(data.fullPrice);
+    }
+    
     const query = "UPDATE products SET name=?, category=?, price=?, unit=?, image=?, hasVariants=?, variants=?, isOutOfStock=? WHERE id=?";
     const values = [data.name, data.category, Number(data.price) || 0, data.unit || 'KG', image, data.hasVariants === 'true', variants, data.isOutOfStock === 'true', req.params.id];
-    db.query(query, values, (err) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ success: true, message: "Dish Updated!" });
-    });
-  });
+    
+    await db.promise().query(query, values);
+    res.json({ success: true, message: "Dish Updated!" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.delete("/api/products/:id", (req, res) => {
@@ -258,28 +298,42 @@ app.get("/api/outlets", (req, res) => {
   });
 });
 
-app.post("/api/outlets", upload.single("imageFile"), (req, res) => {
-  const { name, address, phone, timing, mapLink, isPrimary } = req.body;
-  const image = req.file ? `${BASE_URL}/uploads/${req.file.filename}` : "";
-  const query = "INSERT INTO outlets (name, address, phone, timing, mapLink, image, isPrimary) VALUES (?,?,?,?,?,?,?)";
-  db.query(query, [name, address, phone, timing || '10 AM - 10 PM', mapLink || '', image, isPrimary === 'true' ? 1 : 0], (err) => {
-    if (err) return res.status(500).json({ error: err.message });
+app.post("/api/outlets", upload.single("imageFile"), async (req, res) => {
+  try {
+    const { name, address, phone, timing, mapLink, isPrimary } = req.body;
+    let image = "";
+    
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer);
+      image = result.secure_url;
+    }
+
+    const query = "INSERT INTO outlets (name, address, phone, timing, mapLink, image, isPrimary) VALUES (?,?,?,?,?,?,?)";
+    await db.promise().query(query, [name, address, phone, timing || '10 AM - 10 PM', mapLink || '', image, isPrimary === 'true' ? 1 : 0]);
     res.json({ success: true });
-  });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
-app.put("/api/outlets/:id", upload.single("imageFile"), (req, res) => {
-  const { name, address, phone, timing, mapLink, isPrimary } = req.body;
-  db.query("SELECT image FROM outlets WHERE id = ?", [req.params.id], (err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
+app.put("/api/outlets/:id", upload.single("imageFile"), async (req, res) => {
+  try {
+    const { name, address, phone, timing, mapLink, isPrimary } = req.body;
+    
+    const [results] = await db.promise().query("SELECT image FROM outlets WHERE id = ?", [req.params.id]);
     let image = results[0]?.image || "";
-    if (req.file) image = `${BASE_URL}/uploads/${req.file.filename}`;
+    
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer);
+      image = result.secure_url;
+    }
+    
     const query = "UPDATE outlets SET name=?, address=?, phone=?, timing=?, mapLink=?, image=?, isPrimary=? WHERE id=?";
-    db.query(query, [name, address, phone, timing || '', mapLink || '', image, isPrimary === 'true' ? 1 : 0, req.params.id], (err) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ success: true });
-    });
-  });
+    await db.promise().query(query, [name, address, phone, timing || '', mapLink || '', image, isPrimary === 'true' ? 1 : 0, req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.delete("/api/outlets/:id", (req, res) => {
@@ -389,9 +443,13 @@ app.post("/api/settings", async (req, res) => {
 app.post("/api/upload-image", upload.single("imageFile"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-    const url = `${BASE_URL}/uploads/${req.file.filename}`;
+    
+    // Cloudinary pe upload
+    const result = await uploadToCloudinary(req.file.buffer);
+    const url = result.secure_url;
     const key = req.body.key;
     
+    // Database me update
     await db.promise().query(
       "INSERT INTO settings (settingKey, settingValue) VALUES (?, ?) ON DUPLICATE KEY UPDATE settingValue = ?",
       [key, url, url]
@@ -401,9 +459,6 @@ app.post("/api/upload-image", upload.single("imageFile"), async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-// Serve Uploads
-app.use("/uploads", express.static(uploadDir));
 
 // ERROR HANDLER
 app.use((err, req, res, next) => {
