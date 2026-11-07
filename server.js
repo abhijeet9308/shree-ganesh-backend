@@ -3,7 +3,7 @@ const mysql = require("mysql2");
 const cors = require("cors");
 const multer = require("multer");
 const cloudinary = require("cloudinary").v2;
-const axios = require("axios"); // 👈 AI Chatbot ke liye zaroori hai
+const axios = require("axios");
 require("dotenv").config();
 
 const app = express();
@@ -340,7 +340,7 @@ app.delete("/api/outlets/:id", (req, res) => {
   });
 });
 
-// 5. STAFF (UPGRADED — address, family, photo, aadhar)
+// 5. STAFF
 app.get("/api/staff", (req, res) => {
   db.query("SELECT * FROM staff ORDER BY id DESC", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -472,40 +472,42 @@ app.post("/api/upload-image", upload.single("imageFile"), async (req, res) => {
 });
 
 // ============================================================
-// 8. AI CHATBOT (GOOGLE GEMINI) — NAYA ROUTE
+// 8. AI CHATBOT (GROQ - LLAMA 3) — 100% FREE & FAST
 // ============================================================
 app.post('/api/ai-chat', async (req, res) => {
     const { message } = req.body;
     
     // API key Render ke environment variables se aayegi
-    const API_KEY = process.env.GEMINI_API_KEY; 
+    const API_KEY = process.env.GROQ_API_KEY; 
 
     if (!API_KEY) {
-        return res.status(500).json({ success: false, error: "API Key missing. Please set GEMINI_API_KEY in environment variables." });
+        return res.status(500).json({ success: false, error: "API Key missing. Please set GROQ_API_KEY in environment variables." });
     }
 
     try {
         const response = await axios.post(
-            'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
+            'https://api.groq.com/openai/v1/chat/completions',
             {
-                contents: [{
-                    parts: [{
-                        text: `You are a helpful AI assistant for 'Shree Ganesh Sweets', a sweet shop in Danapur, Patna. You speak in friendly Hinglish. You help the owner with business advice, math calculations, or general queries. Keep answers short and direct. User says: ${message}`
-                    }]
-                }]
+                model: "llama3-8b-8192", // Fast and free model
+                messages: [
+                    { role: "system", content: "You are a helpful AI assistant for 'Shree Ganesh Sweets', a sweet shop in Danapur, Patna. You speak in friendly Hinglish. You help the owner with business advice, math calculations, or general queries. Keep answers short and direct." },
+                    { role: "user", content: message }
+                ],
+                temperature: 0.7,
+                max_tokens: 500
             },
             { 
                 headers: { 
-                    'Content-Type': 'application/json',
-                    'X-goog-api-key': API_KEY
+                    'Authorization': `Bearer ${API_KEY}`,
+                    'Content-Type': 'application/json'
                 } 
             }
         );
 
-        const aiReply = response.data.candidates[0].content.parts[0].text;
+        const aiReply = response.data.choices[0].message.content;
         res.json({ success: true, reply: aiReply });
     } catch (error) {
-        console.error("AI Error:", error.response?.data || error.message);
+        console.error("Groq AI Error:", error.response?.data || error.message);
         res.status(500).json({ success: false, error: "AI se baat nahi ho payi. Check server logs." });
     }
 });
