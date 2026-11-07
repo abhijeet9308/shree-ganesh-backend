@@ -3,7 +3,7 @@ const mysql = require("mysql2");
 const cors = require("cors");
 const multer = require("multer");
 const cloudinary = require("cloudinary").v2;
-const axios = require("axios"); // 👈 NAYA: AI Chatbot ke liye axios add kiya
+const axios = require("axios"); // 👈 AI Chatbot ke liye zaroori hai
 require("dotenv").config();
 
 const app = express();
