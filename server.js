@@ -105,12 +105,10 @@ const createTables = async () => {
     "ALTER TABLE outlets ADD COLUMN mapLink TEXT",
     "ALTER TABLE outlets ADD COLUMN image TEXT",
     "ALTER TABLE outlets ADD COLUMN isPrimary BOOLEAN DEFAULT FALSE",
-    // Naye staff columns
     "ALTER TABLE staff ADD COLUMN address TEXT",
     "ALTER TABLE staff ADD COLUMN family TEXT",
     "ALTER TABLE staff ADD COLUMN photo TEXT",
     "ALTER TABLE staff ADD COLUMN aadhar TEXT",
-    // Attendance unique (purani table ke liye — error ignore hoga agar already hai)
     "ALTER TABLE attendance ADD UNIQUE KEY unique_attendance (staffId, date)"
   ];
   for (const q of alterQueries) {
@@ -472,7 +470,7 @@ app.post("/api/upload-image", upload.single("imageFile"), async (req, res) => {
 });
 
 // ============================================================
-// 8. AI CHATBOT (GROQ - LLAMA 3) — 100% FREE & FAST
+// 8. AI CHATBOT (GROQ - LLAMA 3.3) — 100% FREE & FAST
 // ============================================================
 app.post('/api/ai-chat', async (req, res) => {
     const { message } = req.body;
@@ -488,7 +486,7 @@ app.post('/api/ai-chat', async (req, res) => {
         const response = await axios.post(
             'https://api.groq.com/openai/v1/chat/completions',
             {
-                model: "llama3-8b-8192", // Fast and free model
+                model: "llama-3.3-70b-versatile", // 👈 Yahan Model Update kiya hai
                 messages: [
                     { role: "system", content: "You are a helpful AI assistant for 'Shree Ganesh Sweets', a sweet shop in Danapur, Patna. You speak in friendly Hinglish. You help the owner with business advice, math calculations, or general queries. Keep answers short and direct." },
                     { role: "user", content: message }
