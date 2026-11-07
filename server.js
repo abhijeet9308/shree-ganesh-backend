@@ -470,12 +470,11 @@ app.post("/api/upload-image", upload.single("imageFile"), async (req, res) => {
 });
 
 // ============================================================
-// 8. AI CHATBOT (GROQ - MIXTRAL) — 100% FREE & FAST
+// 8. AI CHATBOT (GROQ - OPENAI GPT-OSS)
 // ============================================================
 app.post('/api/ai-chat', async (req, res) => {
     const { message } = req.body;
     
-    // API key Render ke environment variables se aayegi
     const API_KEY = process.env.GROQ_API_KEY; 
 
     if (!API_KEY) {
@@ -486,7 +485,7 @@ app.post('/api/ai-chat', async (req, res) => {
         const response = await axios.post(
             'https://api.groq.com/openai/v1/chat/completions',
             {
-                model: "mixtral-8x7b-32768", // 👈 FIXED: Sabse reliable model
+                model: "openai/gpt-oss-120b", // 👈 NAYA MODEL (Jo tumhare screenshot me tha)
                 messages: [
                     { role: "system", content: "You are a helpful AI assistant for 'Shree Ganesh Sweets', a sweet shop in Danapur, Patna. You speak in friendly Hinglish. You help the owner with business advice, math calculations, or general queries. Keep answers short and direct." },
                     { role: "user", content: message }
