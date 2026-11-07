@@ -27,12 +27,8 @@ const upload = multer({
 // Helper function: Base64 method (Sabse reliable)
 const uploadToCloudinary = (buffer) => {
   return new Promise((resolve, reject) => {
-    // Buffer ko base64 string me convert karo
     const b64 = Buffer.from(buffer).toString('base64');
-    // Data URI banao
     const dataURI = `data:image/jpeg;base64,${b64}`;
-    
-    // Cloudinary par upload karo
     cloudinary.uploader.upload(
       dataURI, 
       { folder: "shree_ganesh_sweets" }, 
@@ -85,10 +81,12 @@ const createTables = async () => {
       timing VARCHAR(100) DEFAULT '10 AM - 10 PM', mapLink TEXT, image TEXT, isPrimary BOOLEAN DEFAULT FALSE
     )`,
     `CREATE TABLE IF NOT EXISTS staff (
-      id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255), phone VARCHAR(20), role VARCHAR(100), salary DECIMAL(10,2)
+      id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255), phone VARCHAR(20), role VARCHAR(100), 
+      salary DECIMAL(10,2), address TEXT, family TEXT, photo TEXT, aadhar TEXT
     )`,
     `CREATE TABLE IF NOT EXISTS attendance (
-      id INT AUTO_INCREMENT PRIMARY KEY, staffId INT, staffName VARCHAR(255), date DATE, status VARCHAR(20)
+      id INT AUTO_INCREMENT PRIMARY KEY, staffId INT, staffName VARCHAR(255), date DATE, status VARCHAR(20),
+      UNIQUE KEY unique_attendance (staffId, date)
     )`,
     `CREATE TABLE IF NOT EXISTS settings (
       id INT AUTO_INCREMENT PRIMARY KEY, settingKey VARCHAR(100) UNIQUE, settingValue TEXT
@@ -105,7 +103,14 @@ const createTables = async () => {
     "ALTER TABLE outlets ADD COLUMN timing VARCHAR(100) DEFAULT '10 AM - 10 PM'",
     "ALTER TABLE outlets ADD COLUMN mapLink TEXT",
     "ALTER TABLE outlets ADD COLUMN image TEXT",
-    "ALTER TABLE outlets ADD COLUMN isPrimary BOOLEAN DEFAULT FALSE"
+    "ALTER TABLE outlets ADD COLUMN isPrimary BOOLEAN DEFAULT FALSE",
+    // Naye staff columns
+    "ALTER TABLE staff ADD COLUMN address TEXT",
+    "ALTER TABLE staff ADD COLUMN family TEXT",
+    "ALTER TABLE staff ADD COLUMN photo TEXT",
+    "ALTER TABLE staff ADD COLUMN aadhar TEXT",
+    // Attendance unique (purani table ke liye — error ignore hoga agar already hai)
+    "ALTER TABLE attendance ADD UNIQUE KEY unique_attendance (staffId, date)"
   ];
   for (const q of alterQueries) {
     try { await db.promise().query(q); } catch(e) { }
@@ -288,7 +293,7 @@ app.delete("/api/expenses/:id", (req, res) => {
 
 // 4. OUTLETS
 app.get("/api/outlets", (req, res) => {
-  db.query("SELECT * FROM outlets", (err, results) => {
+  db.query("SELECT * FROM outlets ORDER BY isPrimary DESC, id ASC", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(results);
   });
@@ -334,7 +339,7 @@ app.delete("/api/outlets/:id", (req, res) => {
   });
 });
 
-// 5. STAFF
+// 5. STAFF (UPGRADED — address, family, photo, aadhar)
 app.get("/api/staff", (req, res) => {
   db.query("SELECT * FROM staff ORDER BY id DESC", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -343,53 +348,76 @@ app.get("/api/staff", (req, res) => {
 });
 
 app.post("/api/staff", (req, res) => {
-  const { name, phone, role, salary } = req.body;
-  db.query("INSERT INTO staff (name, phone, role, salary) VALUES (?,?,?,?)", [name, phone, role, salary], (err) => {
+  const { name, phone, role, salary, address, family, photo, aadhar } = req.body;
+  const query = "INSERT INTO staff (name, phone, role, salary, address, family, photo, aadhar) VALUES (?,?,?,?,?,?,?,?)";
+  db.query(query, [
+    name, phone, role, Number(salary) || 0,
+    address || '', family || '', photo || '', aadhar || ''
+  ], (err) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ success: true });
   });
 });
 
 app.put("/api/staff/:id", (req, res) => {
-  const { name, phone, role, salary } = req.body;
-  db.query("UPDATE staff SET name=?, phone=?, role=?, salary=? WHERE id=?",
-    [name, phone, role, salary, req.params.id], (err) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ success: true });
-    });
-});
-
-app.delete("/api/staff/:id", (req, res) => {
-  db.query("DELETE FROM staff WHERE id = ?", [req.params.id], (err) => {
+  const { name, phone, role, salary, address, family, photo, aadhar } = req.body;
+  // COALESCE — agar photo/aadhar null hai toh purani value rakho
+  const query = "UPDATE staff SET name=?, phone=?, role=?, salary=?, address=?, family=?, photo=COALESCE(?, photo), aadhar=COALESCE(?, aadhar) WHERE id=?";
+  db.query(query, [
+    name, phone, role, Number(salary) || 0,
+    address || '', family || '', photo || null, aadhar || null,
+    req.params.id
+  ], (err) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ success: true });
   });
 });
 
-// 6. ATTENDANCE
+app.delete("/api/staff/:id", (req, res) => {
+  db.query("DELETE FROM staff WHERE id = ?", [req.params.id], (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    // Attendance bhi delete karo
+    db.query("DELETE FROM attendance WHERE staffId = ?", [req.params.id], () => {});
+    res.json({ success: true });
+  });
+});
+
+// NAYA: Staff photo / aadhar upload route
+app.post("/api/staff/upload-image", upload.single("imageFile"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+    const result = await uploadToCloudinary(req.file.buffer);
+    res.json({ success: true, url: result.secure_url });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 6. ATTENDANCE (UPGRADED — date optional)
 app.get("/api/attendance", (req, res) => {
   const { date } = req.query;
-  db.query("SELECT * FROM attendance WHERE date = ?", [date], (err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(results);
-  });
+  if (date) {
+    // Specific date ka attendance
+    db.query("SELECT * FROM attendance WHERE date = ?", [date], (err, results) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(results);
+    });
+  } else {
+    // Saara attendance (staff.js me salary ke liye zaroori)
+    db.query("SELECT * FROM attendance ORDER BY date DESC", (err, results) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(results);
+    });
+  }
 });
 
 app.post("/api/attendance", (req, res) => {
   const { staffId, staffName, date, status } = req.body;
-  db.query("SELECT * FROM attendance WHERE staffId = ? AND date = ?", [staffId, date], (err, results) => {
+  // UPSERT — insert ya update
+  const query = "INSERT INTO attendance (staffId, staffName, date, status) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE status = ?, staffName = ?";
+  db.query(query, [staffId, staffName, date, status, status, staffName], (err) => {
     if (err) return res.status(500).json({ error: err.message });
-    if(results.length > 0) {
-      db.query("UPDATE attendance SET status = ? WHERE id = ?", [status, results[0].id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true });
-      });
-    } else {
-      db.query("INSERT INTO attendance (staffId, staffName, date, status) VALUES (?,?,?,?)", [staffId, staffName, date, status], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true });
-      });
-    }
+    res.json({ success: true });
   });
 });
 
@@ -437,6 +465,7 @@ app.post("/api/upload-image", upload.single("imageFile"), async (req, res) => {
     const result = await uploadToCloudinary(req.file.buffer);
     const url = result.secure_url;
     const key = req.body.key;
+    if (!key) return res.status(400).json({ error: "key required" });
     await db.promise().query(
       "INSERT INTO settings (settingKey, settingValue) VALUES (?, ?) ON DUPLICATE KEY UPDATE settingValue = ?",
       [key, url, url]
