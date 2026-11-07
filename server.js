@@ -3,6 +3,7 @@ const mysql = require("mysql2");
 const cors = require("cors");
 const multer = require("multer");
 const cloudinary = require("cloudinary").v2;
+const axios = require("axios"); // 👈 NAYA: AI Chatbot ke liye axios add kiya
 require("dotenv").config();
 
 const app = express();
@@ -361,7 +362,6 @@ app.post("/api/staff", (req, res) => {
 
 app.put("/api/staff/:id", (req, res) => {
   const { name, phone, role, salary, address, family, photo, aadhar } = req.body;
-  // COALESCE — agar photo/aadhar null hai toh purani value rakho
   const query = "UPDATE staff SET name=?, phone=?, role=?, salary=?, address=?, family=?, photo=COALESCE(?, photo), aadhar=COALESCE(?, aadhar) WHERE id=?";
   db.query(query, [
     name, phone, role, Number(salary) || 0,
@@ -376,13 +376,11 @@ app.put("/api/staff/:id", (req, res) => {
 app.delete("/api/staff/:id", (req, res) => {
   db.query("DELETE FROM staff WHERE id = ?", [req.params.id], (err) => {
     if (err) return res.status(500).json({ error: err.message });
-    // Attendance bhi delete karo
     db.query("DELETE FROM attendance WHERE staffId = ?", [req.params.id], () => {});
     res.json({ success: true });
   });
 });
 
-// NAYA: Staff photo / aadhar upload route
 app.post("/api/staff/upload-image", upload.single("imageFile"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -393,17 +391,15 @@ app.post("/api/staff/upload-image", upload.single("imageFile"), async (req, res)
   }
 });
 
-// 6. ATTENDANCE (UPGRADED — date optional)
+// 6. ATTENDANCE
 app.get("/api/attendance", (req, res) => {
   const { date } = req.query;
   if (date) {
-    // Specific date ka attendance
     db.query("SELECT * FROM attendance WHERE date = ?", [date], (err, results) => {
       if (err) return res.status(500).json({ error: err.message });
       res.json(results);
     });
   } else {
-    // Saara attendance (staff.js me salary ke liye zaroori)
     db.query("SELECT * FROM attendance ORDER BY date DESC", (err, results) => {
       if (err) return res.status(500).json({ error: err.message });
       res.json(results);
@@ -413,7 +409,6 @@ app.get("/api/attendance", (req, res) => {
 
 app.post("/api/attendance", (req, res) => {
   const { staffId, staffName, date, status } = req.body;
-  // UPSERT — insert ya update
   const query = "INSERT INTO attendance (staffId, staffName, date, status) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE status = ?, staffName = ?";
   db.query(query, [staffId, staffName, date, status, status, staffName], (err) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -474,6 +469,45 @@ app.post("/api/upload-image", upload.single("imageFile"), async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ============================================================
+// 8. AI CHATBOT (GOOGLE GEMINI) — NAYA ROUTE
+// ============================================================
+app.post('/api/ai-chat', async (req, res) => {
+    const { message } = req.body;
+    
+    // API key Render ke environment variables se aayegi
+    const API_KEY = process.env.GEMINI_API_KEY; 
+
+    if (!API_KEY) {
+        return res.status(500).json({ success: false, error: "API Key missing. Please set GEMINI_API_KEY in environment variables." });
+    }
+
+    try {
+        const response = await axios.post(
+            'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
+            {
+                contents: [{
+                    parts: [{
+                        text: `You are a helpful AI assistant for 'Shree Ganesh Sweets', a sweet shop in Danapur, Patna. You speak in friendly Hinglish. You help the owner with business advice, math calculations, or general queries. Keep answers short and direct. User says: ${message}`
+                    }]
+                }]
+            },
+            { 
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-goog-api-key': API_KEY
+                } 
+            }
+        );
+
+        const aiReply = response.data.candidates[0].content.parts[0].text;
+        res.json({ success: true, reply: aiReply });
+    } catch (error) {
+        console.error("AI Error:", error.response?.data || error.message);
+        res.status(500).json({ success: false, error: "AI se baat nahi ho payi. Check server logs." });
+    }
 });
 
 // ERROR HANDLER
