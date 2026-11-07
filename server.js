@@ -470,7 +470,7 @@ app.post("/api/upload-image", upload.single("imageFile"), async (req, res) => {
 });
 
 // ============================================================
-// 8. AI CHATBOT (GROQ - LLAMA 3.1) — 100% FREE & FAST
+// 8. AI CHATBOT (GROQ - MIXTRAL) — 100% FREE & FAST
 // ============================================================
 app.post('/api/ai-chat', async (req, res) => {
     const { message } = req.body;
@@ -486,7 +486,7 @@ app.post('/api/ai-chat', async (req, res) => {
         const response = await axios.post(
             'https://api.groq.com/openai/v1/chat/completions',
             {
-                model: "llama-3.1-8b-instant", // 👈 FIXED: Stable Model
+                model: "mixtral-8x7b-32768", // 👈 FIXED: Sabse reliable model
                 messages: [
                     { role: "system", content: "You are a helpful AI assistant for 'Shree Ganesh Sweets', a sweet shop in Danapur, Patna. You speak in friendly Hinglish. You help the owner with business advice, math calculations, or general queries. Keep answers short and direct." },
                     { role: "user", content: message }
@@ -506,7 +506,6 @@ app.post('/api/ai-chat', async (req, res) => {
         res.json({ success: true, reply: aiReply });
     } catch (error) {
         console.error("Groq AI Error:", error.response?.data || error.message);
-        // 👈 FIXED: Asli error screen par bhejne ke liye
         res.status(500).json({ success: false, error: error.response?.data?.error?.message || error.message || "AI se baat nahi ho payi." });
     }
 });
